@@ -1,0 +1,17 @@
+# Secrets never live here: credentials stay in n8n
+.env
+*.env
+secrets/
+credentials/
+
+# Exported data
+*.csv
+
+# Working notes
+tasks/
+.claude/
+CLAUDE.md
+
+# OS noise
+.DS_Store
+._*

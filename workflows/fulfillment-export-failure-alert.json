@@ -1,0 +1,58 @@
+{
+  "name": "Fulfillment export failure alert",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c493136b-8e2a-4974-9ccf-c281df7a153e",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "sendTo": "alerts@example.com",
+        "subject": "=Export failed: {{ $json.workflow.name }}",
+        "message": "=<p>The fulfillment export stopped at: <b>{{ $json.execution?.lastNodeExecuted ?? 'the trigger' }}</b></p>\n<p>Error: {{ $json.execution?.error?.message ?? $json.trigger?.error?.message }}</p>\n<p>Nothing after that step ran. Orders that were not tagged exported will be picked up by the next run.</p>\n<p><a href=\"{{ $json.execution?.url }}\">Open the failed execution</a></p>",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Fulfillment export alerts"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "b80805a7-514b-43c4-9a1a-e8ee999df796",
+      "name": "Email failure alert",
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail demo"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Email failure alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "pinData": {}
+}

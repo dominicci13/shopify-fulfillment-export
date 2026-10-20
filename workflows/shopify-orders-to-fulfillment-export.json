@@ -1,0 +1,444 @@
+{
+  "name": "Shopify orders to fulfillment export",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "05afad6c-6a96-41e6-a0bf-b737c76c1692",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/oauth/access_token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        96
+      ],
+      "id": "3017c706-f7b0-4775-aff1-6ea34cc33846",
+      "name": "Get access token",
+      "credentials": {
+        "httpCustomAuth": {
+          "name": "Shopify store"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/api/2026-10/graphql.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "query OrdersToExport {   orders(first: 50, query: \"financial_status:paid fulfillment_status:unfulfilled -tag:exported\") {     nodes {       id       name       createdAt       shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }       lineItems(first: 50) { pageInfo { hasNextPage }         nodes { sku name quantity requiresShipping }     }     }   } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        96
+      ],
+      "id": "574ec6a0-f9c0-4e8b-8936-6dce89ba8b05",
+      "name": "Get orders to export"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $('Get orders to export').first().json;\n\n// GraphQL answers HTTP 200 even when the query fails, so the HTTP node won't catch it\nif (response.errors) {\n  throw new Error(`Shopify query failed: ${response.errors[0].message}`);\n}\n\nconst skuMap = new Map($input.all().map(row => [row.json.shopify_sku, row.json.fc_sku]));\n\n// Spreadsheets run a cell starting with = + - @ as a formula, and these fields are typed by the customer\nconst cell = value => (/^[=+\\-@\\t\\r]/.test(value ?? '') ? `'${value}` : value ?? '');\n\nconst orders = response.data.orders.nodes;\n\nreturn orders.flatMap(order => {\n  const ship = order.shippingAddress;\n  if (!ship) return []; // pickup orders have no address and never go to the fulfillment center\n  // Tagging an order whose lines did not all fit would lose the rest for good\n  if (order.lineItems.pageInfo.hasNextPage) {\n    throw new Error(`Order ${order.name} has more than 50 lines. Export it by hand and tag it exported.`);\n  }\n  return order.lineItems.nodes\n    .filter(line => line.requiresShipping)\n    .map(line => {\n      const fcSku = skuMap.get(line.sku);\n      if (!fcSku) throw new Error(`SKU ${line.sku} on order ${order.name} is not in sku_map. Add it to the table and re-run.`);\n\n      return {\n        json: {\n          order_id: order.id,\n          order_name: order.name,\n          shopify_sku: line.sku,\n          fc_sku: fcSku,\n          quantity: line.quantity,\n          ship_name: cell(ship.name),\n          address1: cell(ship.address1),\n          address2: cell(ship.address2),\n          city: cell(ship.city),\n          province: ship.provinceCode,\n          zip: ship.zip,\n          country: ship.countryCodeV2,\n          phone: ship.phone ? '+' + ship.phone.replace(/\\D/g, '') : '',\n        },\n      };\n    });\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "id": "67e838c7-c060-400a-9295-f39494c81eb8",
+      "name": "Shape rows"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        96
+      ],
+      "id": "4c50b1a8-1cc9-410a-8588-0f1283784c49",
+      "name": "Get SKU map"
+    },
+    {
+      "parameters": {
+        "includeOtherFields": true,
+        "include": "except",
+        "excludeFields": "order_id, shopify_sku",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        96
+      ],
+      "id": "7dcaf196-93f5-44fb-9afc-5c10c9815115",
+      "name": "File columns"
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "=fulfillment-orders-{{ $now.toFormat('yyyy-MM-dd') }}.csv",
+          "headerRow": true
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        96
+      ],
+      "id": "d22d2075-7136-4afb-98b4-1d52fff133eb",
+      "name": "Build CSV"
+    },
+    {
+      "parameters": {
+        "sendTo": "fulfillment@example.com",
+        "subject": "=Fulfillment orders {{ $now.toFormat('yyyy-MM-dd') }}",
+        "emailType": "text",
+        "message": "=Attached: {{ $('Shape rows').all().length }} lines to ship.",
+        "options": {
+          "appendAttribution": false,
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {}
+            ]
+          },
+          "senderName": "Snack Lab"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        96
+      ],
+      "id": "89b7b945-b73b-4711-9790-dd2aad57b929",
+      "name": "Email fulfillment center",
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const orderIds = $('Shape rows').all().map(item => item.json.order_id);\n\n// an order with several shippable lines has several rows, so dedupe before tagging\nconst uniqueIds = [...new Set(orderIds)];\n\nreturn uniqueIds.map(id => ({ json: { order_id: id } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        96
+      ],
+      "id": "6ae97036-58dd-46bb-a6d6-176df17eaa6b",
+      "name": "Orders to tag"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/api/2026-10/graphql.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $('Get access token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=mutation { tagsAdd(id: \"{{ $json.order_id }}\", tags: [\"exported\"]) { node { id } userErrors { field message } } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        96
+      ],
+      "id": "a510d0ae-33ce-4923-885d-269db9eb7f11",
+      "name": "Tag as exported"
+    },
+    {
+      "parameters": {
+        "jsCode": "const orders = $('Orders to tag').all();\n\nconst failures = $input.all().flatMap((item, i) => {\n  const orderId = orders[i].json.order_id;\n  const response = item.json;\n  if (response.errors) return [`${orderId}: ${response.errors[0].message}`];\n  return response.data.tagsAdd.userErrors.map(error => `${orderId}: ${error.message}`);\n});\n\n// Shopify answers 200 even when a tag is rejected, so a failure only shows up in the body\nif (failures.length) {\n  throw new Error(`Tagging failed, these orders will be emailed again on the next run: ${failures.join('; ')}`);\n}\n\nreturn [{ json: { tagged: orders.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        96
+      ],
+      "id": "37582352-6a71-4391-b6f3-a678948ce229",
+      "name": "Check tagging"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        192
+      ],
+      "id": "2ee82622-58cc-494a-906d-be4993408f36",
+      "name": "Every morning at 7"
+    },
+    {
+      "parameters": {
+        "content": "## Runs every morning at 7:00\nShopify orders to the fulfillment center. Replaces a 15 minute manual export.",
+        "height": 208,
+        "width": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        160,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "dfb17134-2a79-4fb7-95fc-b6c8feb1734b",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Unknown SKU? Nothing is sent\nShopify SKUs are mapped to the warehouse's own codes. A missing one stops the run, and an alert email names the order and the fix.",
+        "height": 208,
+        "width": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        704,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "2f2dbca7-6f10-41c6-80c4-7454c0bee08b",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## One CSV, by email\nOne row per shippable line, gift cards skipped.",
+        "height": 208,
+        "width": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1376,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "7dc88d4c-05e4-4610-ab63-919297d79760",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## Tagged only after the email goes out\nA failed email is retried on the next run, and a rerun after a successful export finds nothing to send.",
+        "height": 208,
+        "width": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1920,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "547f6c11-66f3-4c43-823e-7b7f348fc958",
+      "name": "Sticky Note4"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get access token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get access token": {
+      "main": [
+        [
+          {
+            "node": "Get orders to export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get orders to export": {
+      "main": [
+        [
+          {
+            "node": "Get SKU map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SKU map": {
+      "main": [
+        [
+          {
+            "node": "Shape rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape rows": {
+      "main": [
+        [
+          {
+            "node": "File columns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File columns": {
+      "main": [
+        [
+          {
+            "node": "Build CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CSV": {
+      "main": [
+        [
+          {
+            "node": "Email fulfillment center",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email fulfillment center": {
+      "main": [
+        [
+          {
+            "node": "Orders to tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orders to tag": {
+      "main": [
+        [
+          {
+            "node": "Tag as exported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag as exported": {
+      "main": [
+        [
+          {
+            "node": "Check tagging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every morning at 7": {
+      "main": [
+        [
+          {
+            "node": "Get access token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timezone": "America/New_York"
+  },
+  "pinData": {}
+}

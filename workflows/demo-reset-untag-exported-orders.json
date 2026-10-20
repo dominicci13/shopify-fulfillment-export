@@ -1,0 +1,201 @@
+{
+  "name": "Demo reset: untag exported orders",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -16
+      ],
+      "id": "558e58a0-1b2f-427f-848c-1592e351b66e",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/oauth/access_token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        -16
+      ],
+      "id": "47f5f57b-bb3d-4420-9359-c240b514daa2",
+      "name": "Get access token",
+      "credentials": {
+        "httpCustomAuth": {
+          "name": "Shopify store"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/api/2026-10/graphql.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "{ orders(first: 50, query: \"tag:exported\") { nodes { id name } } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        -16
+      ],
+      "id": "c2ee1c65-8c9b-485f-ad30-96fc268eb5e9",
+      "name": "Find exported orders"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\n// GraphQL answers HTTP 200 even when the query fails\nif (response.errors) {\n  throw new Error(`Shopify query failed: ${response.errors[0].message}`);\n}\n\nreturn response.data.orders.nodes.map(order => ({\n  json: { order_id: order.id, order_name: order.name },\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -16
+      ],
+      "id": "7f7ada6f-8a28-4fb4-ac3e-9c97c6361a39",
+      "name": "Orders to untag"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-store.myshopify.com/admin/api/2026-10/graphql.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $('Get access token').first().json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=mutation { tagsRemove(id: \"{{ $json.order_id }}\", tags: [\"exported\"]) { node { id } userErrors { field message } } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        -16
+      ],
+      "id": "78df4a69-9404-45b8-ad37-a68ae39d771d",
+      "name": "Remove exported tag"
+    },
+    {
+      "parameters": {
+        "jsCode": "const orders = $('Orders to untag').all();\n\nconst failures = $input.all().flatMap((item, i) => {\n  const orderName = orders[i].json.order_name;\n  const response = item.json;\n  if (response.errors) return [`${orderName}: ${response.errors[0].message}`];\n  return response.data.tagsRemove.userErrors.map(error => `${orderName}: ${error.message}`);\n});\n\nif (failures.length) {\n  throw new Error(`Reset incomplete: ${failures.join('; ')}`);\n}\n\nreturn [{ json: { reset: orders.map(order => order.json.order_name) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -16
+      ],
+      "id": "fbb2fca1-8871-430d-8186-e2c4eb9b50b7",
+      "name": "Check untagging"
+    }
+  ],
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get access token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get access token": {
+      "main": [
+        [
+          {
+            "node": "Find exported orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find exported orders": {
+      "main": [
+        [
+          {
+            "node": "Orders to untag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Orders to untag": {
+      "main": [
+        [
+          {
+            "node": "Remove exported tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove exported tag": {
+      "main": [
+        [
+          {
+            "node": "Check untagging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "pinData": {}
+}
